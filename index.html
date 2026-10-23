@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Textmode City</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #out { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #ui {
+    position: fixed; top: 12px; left: 12px; width: 270px; padding: 12px 14px;
+    background: rgba(8, 8, 14, .86); border: 1px solid #2a2a3a; border-radius: 6px;
+    font: 12px/1.4 Menlo, Monaco, Consolas, monospace; color: #c8cce0;
+  }
+  #ui.hidden { display: none; }
+  #ui .title { color: #fff; font-weight: bold; letter-spacing: 1px; margin-bottom: 8px; }
+  #ui .title span { color: #7a7f99; font-weight: normal; letter-spacing: 0; }
+  #ui label { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+  #ui label > span:first-child { width: 64px; flex: none; color: #8a8fa8; }
+  #ui select, #ui input[type=number], #ui input[type=text] {
+    flex: 1; min-width: 0; background: #14141f; color: #e4e6f0; border: 1px solid #33334a;
+    border-radius: 3px; font: inherit; padding: 2px 4px;
+  }
+  #ui input[type=range] { flex: 1; min-width: 0; accent-color: #8f7bff; }
+  #ui output { width: 34px; text-align: right; color: #e4e6f0; }
+  #ui .row { display: flex; gap: 6px; margin-top: 8px; }
+  #ui button {
+    flex: 1; background: #1d1d2c; color: #e4e6f0; border: 1px solid #3a3a55; border-radius: 3px;
+    font: inherit; padding: 4px 6px; cursor: pointer;
+  }
+  #ui button:hover { background: #2a2a40; }
+  #ui .hint { margin-top: 8px; color: #6a6f88; font-size: 11px; }
+</style>
+</head>
+<body>
+<canvas id="out"></canvas>
+<div id="ui">
+  <div class="title">TEXTMODE CITY <span id="stat"></span></div>
+  <label><span>Scene</span><select id="scene"></select></label>
+  <label><span>Mode</span><select id="mode"></select></label>
+  <label><span>Chars</span><input type="text" id="chars" spellcheck="false" autocomplete="off" placeholder="type any characters"></label>
+  <label><span>Palette</span><select id="palette"></select></label>
+  <label><span>Columns</span><input type="range" id="cols" min="16" max="640" step="1"><output id="colsV"></output></label>
+  <label><span>Black</span><input type="range" id="black" min="0" max="0.4" step="0.01"><output id="blackV"></output></label>
+  <label><span>Gain</span><input type="range" id="gain" min="0.5" max="3" step="0.05"><output id="gainV"></output></label>
+  <label><span>Dither</span><input type="range" id="dither" min="0" max="1" step="0.05"><output id="ditherV"></output></label>
+  <label><span>Hue</span><input type="range" id="hue" min="-180" max="180" step="1"><output id="hueV"></output></label>
+  <label><span>Sat</span><input type="range" id="sat" min="0" max="2" step="0.05"><output id="satV"></output></label>
+  <label><span>Density</span><input type="range" id="density" min="0.25" max="3" step="0.05"><output id="densityV"></output></label>
+  <label><span>Seed</span><input type="number" id="seed" min="1" max="99999"></label>
+  <label><span>Output</span><select id="res"><option value="1920x1080">1920×1080 HD</option><option value="2560x1440">2560×1440</option><option value="3840x2160">3840×2160 4K</option></select></label>
+  <label><span>Loop</span><select id="loop"><option>4</option><option>8</option><option>12</option><option>16</option><option>24</option><option>32</option></select>
+    <select id="fps"><option>8</option><option>10</option><option>12</option><option>18</option><option>24</option><option>25</option><option>30</option><option>60</option></select></label>
+  <label><span>CRT</span><input type="checkbox" id="crt"><span style="width:auto;margin-left:14px">Parallax</span><input type="checkbox" id="pan"></label>
+  <div class="row"><button id="play">Pause</button><button id="copy">Copy export cmd</button></div>
+  <div class="hint">H hide · Space pause · 1–7 modes · , . step frame<br>Loop is seconds; fps sets frame count.</div>
+</div>
+<script src="scenes/common.js"></script>
+<script src="scenes/city.js"></script>
+<script src="scenes/falls.js"></script>
+<script src="scenes/mountains.js"></script>
+<script src="scenes/desert.js"></script>
+<script src="scenes/coast.js"></script>
+<script src="scenes/primitives.js"></script>
+<script src="scenes/drive.js"></script>
+<script src="scenes/prims.js"></script>
+<script src="scenes/drive-city.js"></script>
+<script src="scenes/drive-coast.js"></script>
+<script src="scenes/drive-mountains.js"></script>
+<script src="scenes/drive-desert.js"></script>
+<script src="scenes/drive-jungle.js"></script>
+<script src="scenes/drive-prims.js"></script>
+<script>
+'use strict';
+// Textmode City: a looping rainy-night scene rendered through classic text-art character sets.
+// The scene is drawn to a small canvas, sampled per character cell, and each mode turns
+// those samples into glyphs. Every motion repeats a whole number of times per loop, so
+// frame N and frame 0 meet seamlessly when the clip loops in Resolume.
+
+const TAU = Math.PI * 2;
+const Q = new URLSearchParams(location.search);
+const qn = (k, d) => (Q.has(k) ? +Q.get(k) : d);
+
+const MODES = {
+  ascii:    { label: 'ASCII',               aspect: 1.8, cols: 160, sx: 4, sy: 4, palette: 'ansi' },
+  blocks:   { label: 'ANSI blocks (CP437)', aspect: 2.0, cols: 160, sx: 2, sy: 4, palette: 'ansi' },
+  petscii:  { label: 'PETSCII (C64)',       aspect: 1.0, cols: 96,  sx: 4, sy: 4, palette: 'c64' },
+  teletext: { label: 'Teletext mosaic',     aspect: 1.5, cols: 80,  sx: 2, sy: 3, palette: 'teletext' },
+  braille:  { label: 'Braille dots',        aspect: 2.0, cols: 192, sx: 2, sy: 4, palette: 'ansi' },
+  lines:    { label: 'Box-drawing lines',   aspect: 2.0, cols: 120, sx: 4, sy: 4, palette: 'ansi' },
+  custom:   { label: 'Custom characters',   aspect: 1.8, cols: 160, sx: 4, sy: 4, palette: 'ansi' },
+};
+
+const ANSI = ['#000000', '#aa0000', '#00aa00', '#aa5500', '#0000aa', '#aa00aa', '#00aaaa', '#aaaaaa',
+              '#555555', '#ff5555', '#55ff55', '#ffff55', '#5555ff', '#ff55ff', '#55ffff', '#ffffff'];
+const C64 = ['#000000', '#ffffff', '#68372b', '#70a4b2', '#6f3d86', '#588d43', '#352879', '#b8c76f',
+             '#6f4f25', '#433900', '#9a6759', '#444444', '#6c6c6c', '#9ad284', '#6c5eb5', '#959595'];
+const TTX = ['#000000', '#ff0000', '#00ff00', '#ffff00', '#0000ff', '#ff00ff', '#00ffff', '#ffffff'];
+
+const ZX = ['#000000', '#0000d7', '#d70000', '#d700d7', '#00d700', '#00d7d7', '#d7d700', '#d7d7d7',
+            '#0000ff', '#ff0000', '#ff00ff', '#00ff00', '#00ffff', '#ffff00', '#ffffff'];
+const PICO8 = ['#000000', '#1d2b53', '#7e2553', '#008751', '#ab5236', '#5f574f', '#c2c3c7', '#fff1e8',
+               '#ff004d', '#ffa300', '#ffec27', '#00e436', '#29adff', '#83769c', '#ff77a8', '#ffccaa'];
+
+// fg: glyph colors. bg: cell background colors (only the blocks mode uses more than one).
+// mono palettes are gradient maps: cells pick a colour by brightness, dark to light.
+const colorSet = (label, cols, screen = '#000000') => ({ group: 'Color sets', label, fg: cols, bg: [screen, ...cols.slice(0, 3)], screen, border: screen });
+const gradient = (label, ramp) => ({ group: 'Gradient maps', label, mono: true, fg: ramp.slice(1), bg: ramp.slice(0, 2), screen: ramp[0], border: ramp[0] });
+const PALETTES = {
+  ansi:      { group: 'Retro hardware', label: 'ANSI / VGA 16', fg: ANSI.slice(1), bg: ANSI.slice(0, 8), screen: '#000000', border: '#000000' },
+  c64:       { group: 'Retro hardware', label: 'C64 blue screen', fg: C64.filter(c => c !== '#352879'), bg: C64, screen: '#352879', border: '#6c5eb5' },
+  c64night:  { group: 'Retro hardware', label: 'C64 black screen', fg: C64.slice(1), bg: C64, screen: '#000000', border: '#000000' },
+  teletext:  { group: 'Retro hardware', label: 'Teletext 8', fg: TTX.slice(1), bg: TTX, screen: '#000000', border: '#000000' },
+  zx:        { group: 'Retro hardware', label: 'ZX Spectrum', fg: ZX.slice(1), bg: ZX.slice(0, 8), screen: '#000000', border: '#000000' },
+  cga:       { group: 'Retro hardware', label: 'CGA cyan/magenta', fg: ['#55ffff', '#ff55ff', '#ffffff'], bg: ['#000000'], screen: '#000000', border: '#000000' },
+  cgawarm:   { group: 'Retro hardware', label: 'CGA red/green/yellow', fg: ['#55ff55', '#ff5555', '#ffff55'], bg: ['#000000'], screen: '#000000', border: '#000000' },
+  pico8:     { group: 'Retro hardware', label: 'PICO-8', fg: PICO8.slice(1), bg: PICO8.slice(0, 6), screen: '#000000', border: '#000000' },
+  gameboy:   { group: 'Retro hardware', label: 'Game Boy', mono: true, fg: ['#306230', '#8bac0f', '#9bbc0f'], bg: ['#0f380f'], screen: '#0f380f', border: '#0f380f' },
+  green:     { group: 'Retro hardware', label: 'Green phosphor', mono: true, fg: ['#0f3d12', '#1f7a24', '#33cc3a', '#66ff66', '#ccffcc'], bg: ['#000000', '#071a08'], screen: '#000000', border: '#000000' },
+  amber:     { group: 'Retro hardware', label: 'Amber phosphor', mono: true, fg: ['#3d2200', '#7a4500', '#cc7a00', '#ffb000', '#ffd98a'], bg: ['#000000', '#1a0e00'], screen: '#000000', border: '#000000' },
+  mono:      { group: 'Retro hardware', label: 'Mono white', mono: true, fg: ['#444444', '#777777', '#aaaaaa', '#dddddd', '#ffffff'], bg: ['#000000', '#222222'], screen: '#000000', border: '#000000' },
+  truecolor: { group: 'Retro hardware', label: 'Truecolor', truecolor: true, fg: [], bg: ['#000000'], screen: '#000000', border: '#000000' },
+  vapor:     colorSet('Vaporwave', ['#ff71ce', '#01cdfe', '#05ffa1', '#b967ff', '#fffb96', '#ffffff'], '#140b26'),
+  neon:      colorSet('Neon night', ['#ff2a6d', '#05d9e8', '#d1f7ff', '#7700ff', '#ff9e00', '#ffffff'], '#05010f'),
+  jungle:    colorSet('Jungle', ['#1b4d2a', '#2e8b3a', '#7ccf4a', '#d8f070', '#3ab0c0', '#e8fff0'], '#020a05'),
+  pastel:    colorSet('Pastel', ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf', '#9bf6ff', '#bdb2ff', '#ffc6ff'], '#1a1622'),
+  earth:     colorSet('Earth tones', ['#6b4f2a', '#a67c52', '#d9b88f', '#5a7a3a', '#9ab068', '#e8dcc0'], '#120d08'),
+  sunset:    gradient('Sunset', ['#14051f', '#4a0f4f', '#a3195b', '#ff4f3a', '#ff9a3c', '#ffe29a']),
+  ocean:     gradient('Ocean', ['#020b1a', '#0b2e5c', '#14609e', '#2fa4d8', '#8ee3ff', '#f0fdff']),
+  fire:      gradient('Fire', ['#0a0000', '#4a0500', '#a01a00', '#ff5a00', '#ffb000', '#fff4c0']),
+  ice:       gradient('Ice', ['#05070f', '#1c2a4a', '#3e5f9a', '#7aa8e0', '#c0e4ff', '#ffffff']),
+  matrix:    gradient('Matrix', ['#000000', '#003b00', '#008f11', '#00c42e', '#00ff41', '#b4ffb4']),
+  sepia:     gradient('Sepia', ['#0e0a06', '#3b2a1a', '#6b4a2a', '#a07a4a', '#d8b07a', '#f4e0b8']),
+  synth:     gradient('Synthwave', ['#0d0221', '#2a0b5c', '#7b1fa2', '#e91e8c', '#ff6ec7', '#9ef0ff']),
+  toxic:     gradient('Toxic', ['#050805', '#1e3a0a', '#4a8a10', '#a8e020', '#e8ff50', '#ffffff']),
+};
+
+const cfg = {
+  scene: SCENES[Q.get('scene')] ? Q.get('scene') : 'city',
+  mode: MODES[Q.get('mode')] ? Q.get('mode') : 'ascii',
+  palette: PALETTES[Q.get('palette')] ? Q.get('palette') : 'native',
+  cols: qn('cols', 0),
+  chars: Q.get('chars') ?? '.,-~:;=!*#$@',
+  black: qn('black', 0.05),
+  gain: qn('gain', 1.35),
+  dither: qn('dither', 0.6),
+  hue: qn('hue', 0),
+  sat: qn('sat', 1),
+  density: qn('density', 1),
+  seed: qn('seed', 7),
+  loop: qn('loop', 8),
+  fps: qn('fps', 30),
+  crt: Q.get('crt') === '1',
+  pan: Q.get('pan') === '1',
+  w: qn('w', 1920),
+  h: qn('h', 1080),
+};
+const EXPORT = Q.get('export') === '1';
+
+// ---------- small helpers ----------
+const clamp = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
+function rng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hash(a, b) {
+  let h = Math.imul(a | 0, 0x27d4eb2d) ^ Math.imul((b + 0x9e3779b9) | 0, 0x85ebca6b);
+  h ^= h >>> 15; h = Math.imul(h, 0x2c1b3c6d); h ^= h >>> 12;
+  return (h >>> 0) / 4294967296;
+}
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
+function rgbHex(r, g, b) {
+  return '#' + ((1 << 24) | (Math.round(clamp(r) * 255) << 16) | (Math.round(clamp(g) * 255) << 8) | Math.round(clamp(b) * 255)).toString(16).slice(1);
+}
+function mixCss(a, b, t) {
+  const x = hexRgb(a), y = hexRgb(b);
+  return rgbHex(x[0] + (y[0] - x[0]) * t, x[1] + (y[1] - x[1]) * t, x[2] + (y[2] - x[2]) * t);
+}
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+
+// ---------- glyph sets ----------
+function bitmap(fn, w = 8, h = 8) {
+  const rows = [];
+  for (let y = 0; y < h; y++) { let b = 0; for (let x = 0; x < w; x++) if (fn(x, y)) b |= 1 << (w - 1 - x); rows.push(b); }
+  return rows;
+}
+function mask4(rows, w) {
+  const h = rows.length, m = new Float32Array(16), cell = (w / 4) * (h / 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if ((rows[y] >> (w - 1 - x)) & 1) m[Math.floor((y * 4) / h) * 4 + Math.floor((x * 4) / w)] += 1 / cell;
+  return m;
+}
+function glyphSet(masks, lam) {
+  const n = masks.length, flat = new Float32Array(n * 16), means = new Float32Array(n);
+  masks.forEach((m, i) => { flat.set(m, i * 16); means[i] = m.reduce((a, b) => a + b, 0) / 16; });
+  return { n, masks: flat, means, lam };
+}
+function match(set, s, mean) {
+  const { n, masks, means, lam } = set;
+  let best = 0, be = Infinity;
+  for (let gi = 0; gi < n; gi++) {
+    const o = gi * 16;
+    // Start from the density term and stop as soon as this glyph can't beat the best so far.
+    const dm = means[gi] - mean;
+    let e = lam * 16 * dm * dm;
+    for (let k = 0; k < 16 && e < be; k++) { const d = masks[o + k] - s[k]; e += d * d; }
+    if (e < be) { be = e; best = gi; }
+  }
+  return best;
+}
+
+// PETSCII-style 8x8 graphics: all 16 quadrant combos, triangles, checkers, bars, diagonals, balls.
+const PET = [];
+for (let q = 0; q < 16; q++) PET.push(bitmap((x, y) => (q >> ((y >= 4 ? 2 : 0) + (x >= 4 ? 1 : 0))) & 1));
+[
+  (x, y) => x + y >= 7, (x, y) => x <= y, (x, y) => x + y <= 7, (x, y) => x >= y,
+  (x, y) => (x + y) % 2 === 0,
+  (x, y) => x < 4 && (x + y) % 2 === 0, (x, y) => x >= 4 && (x + y) % 2 === 0,
+  (x, y) => y < 4 && (x + y) % 2 === 0, (x, y) => y >= 4 && (x + y) % 2 === 0,
+  (x, y) => y === 3 || y === 4, (x, y) => x === 3 || x === 4, (x, y) => y === 3 || y === 4 || x === 3 || x === 4,
+  (x, y) => y < 2, (x, y) => y >= 6, (x, y) => x < 2, (x, y) => x >= 6,
+  (x, y) => Math.abs(x + y - 7) <= 1, (x, y) => Math.abs(x - y) <= 1,
+  (x, y) => Math.abs(x + y - 7) <= 1 || Math.abs(x - y) <= 1,
+  (x, y) => (x - 3.5) ** 2 + (y - 3.5) ** 2 <= 13,
+  (x, y) => { const d = (x - 3.5) ** 2 + (y - 3.5) ** 2; return d <= 13 && d >= 5; },
+  (x, y) => (x - 3.5) ** 2 + (y - 3.5) ** 2 <= 3,
+].forEach(fn => PET.push(bitmap(fn)));
+const PET_SET = glyphSet(PET.map(r => mask4(r, 8)), 1.5);
+
+// CP437 blocks on an 8x16 cell, with the shade glyphs' coverage used for colour mixing.
+const BLK = {
+  ' ': { rows: bitmap(() => 0, 8, 16), a: 0 },
+  '░': { rows: bitmap((x, y) => (y % 2 ? x % 4 === 2 : x % 4 === 0), 8, 16), a: 0.25 },
+  '▒': { rows: bitmap((x, y) => (x + y) % 2 === 0, 8, 16), a: 0.5 },
+  '▓': { rows: bitmap((x, y) => !(y % 2 ? x % 4 === 2 : x % 4 === 0), 8, 16), a: 0.75 },
+  '█': { rows: bitmap(() => 1, 8, 16), a: 1 },
+  '▀': { rows: bitmap((x, y) => y < 8, 8, 16) },
+  '▄': { rows: bitmap((x, y) => y >= 8, 8, 16) },
+  '▌': { rows: bitmap(x => x < 4, 8, 16) },
+  '▐': { rows: bitmap(x => x >= 4, 8, 16) },
+};
+
+// Box-drawing: centre arms N=1 E=2 S=4 W=8 (all 16 combos), then ╱ ╲ ╳, a centre dot and a small box.
+const LINE_DEFS = [];
+for (let b = 0; b < 16; b++) LINE_DEFS.push(bitmap((x, y) =>
+  ((b & 1) && (x === 3 || x === 4) && y <= 4) || ((b & 2) && (y === 3 || y === 4) && x >= 3) ||
+  ((b & 4) && (x === 3 || x === 4) && y >= 3) || ((b & 8) && (y === 3 || y === 4) && x <= 4)));
+LINE_DEFS.push(bitmap((x, y) => Math.abs(x + y - 7) <= 1), bitmap((x, y) => Math.abs(x - y) <= 1),
+  bitmap((x, y) => Math.abs(x + y - 7) <= 1 || Math.abs(x - y) <= 1), bitmap((x, y) => x >= 3 && x <= 4 && y >= 3 && y <= 4),
+  bitmap((x, y) => x >= 1 && x <= 6 && y >= 1 && y <= 6 && (x === 1 || x === 6 || y === 1 || y === 6)));
+const LINE_SET = glyphSet(LINE_DEFS.map(r => mask4(r, 8)), 1.0);
+
+const ASCII_CHARS = " .,:;'`-_~^\"=+*!|/\\()[]<>{}ilxoO0#%&@$MW";
+let ASCII, CUSTOM;
+const fontAt = px => `bold ${px.toFixed(1)}px Menlo, Monaco, Consolas, "Courier New", monospace`;
+
+// Splits typed text into user-perceived characters (so emoji and accents stay whole),
+// drops whitespace and repeats, and always puts the blank cell first.
+function splitChars(str) {
+  const out = [' '];
+  for (const { segment } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(str)) {
+    if (!/^\s+$/.test(segment) && !out.includes(segment)) out.push(segment);
+  }
+  return out;
+}
+
+// Widest glyph advance as a fraction of the font size (monospace Latin is about 0.6).
+function glyphWidth(chars) {
+  const g = document.createElement('canvas').getContext('2d');
+  g.font = fontAt(100);
+  return Math.max(0, ...chars.filter(c => c !== ' ').map(c => g.measureText(c).width / 100));
+}
+
+// Renders every glyph at cell size and measures its ink on a 4x4 grid. Glyphs wider than a
+// cell (CJK, emoji) are shrunk to fit. `ramp` lists the glyphs used for flat areas.
+function buildCharset(chars, ramp) {
+  const base = Math.max(6, Math.min(ch * 0.92, cw / 0.62));
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff';
+  const masks = [], fonts = [], dys = [];
+  for (const chr of chars) {
+    g.font = fontAt(base);
+    const w = g.measureText(chr).width, fs = w > cw * 0.96 ? (base * cw * 0.96) / w : base;
+    fonts.push(fontAt(fs)); dys.push(fs * 0.06);
+    g.font = fonts[fonts.length - 1];
+    g.clearRect(0, 0, cw, ch); g.fillText(chr, cw / 2, ch / 2 + dys[dys.length - 1]);
+    const d = g.getImageData(0, 0, cw, ch).data, m = new Float32Array(16), cnt = new Float32Array(16);
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const k = Math.floor((y * 4) / ch) * 4 + Math.floor((x * 4) / cw);
+      m[k] += d[(y * cw + x) * 4 + 3] / 255; cnt[k]++;
+    }
+    for (let k = 0; k < 16; k++) m[k] /= cnt[k] || 1;
+    masks.push(m);
+  }
+  // Scale ink coverage so the densest glyph stands in for a fully lit cell.
+  const top = Math.max(1e-6, ...masks.map(m => m.reduce((a, b) => a + b, 0) / 16));
+  for (const m of masks) for (let k = 0; k < 16; k++) m[k] = Math.min(1, (m[k] / top) * 0.9);
+  return { chars, fonts, dys, set: glyphSet(masks, 1.2), ramp: ramp ? [...ramp].map(r => chars.indexOf(r)) : chars.map((_, i) => i) };
+}
+// Flat cells read better as a plain density ramp than as the closest-shaped glyph.
+function rampGlyph(cs, mean) {
+  let best = 0, be = Infinity;
+  for (const gi of cs.ramp) { const e = Math.abs(cs.set.means[gi] - mean); if (e < be) { be = e; best = gi; } }
+  return best;
+}
+
+// ---------- palette ----------
+let pal, memo;
+function resolvePalette() {
+  const p = PALETTES[cfg.palette === 'native' ? MODES[cfg.mode].palette : cfg.palette];
+  pal = { ...p, fgRgb: p.fg.map(hexRgb), bgRgb: p.bg.map(hexRgb) };
+  memo = { fg: new Map(), bg: new Map(), mix: new Map() };
+  if (cfg.mode === 'blocks' && !pal.truecolor) {
+    pal.mixes = [];
+    pal.bgRgb.forEach((b, bi) => pal.mixes.push({ gid: ' ', fg: pal.bg[bi], bg: pal.bg[bi], rgb: b }));
+    pal.fgRgb.forEach((f, fi) => {
+      pal.mixes.push({ gid: '█', fg: pal.fg[fi], bg: pal.bg[0], rgb: f });
+      for (const gid of ['░', '▒', '▓']) {
+        const a = BLK[gid].a;
+        pal.bgRgb.forEach((b, bi) => pal.mixes.push({ gid, fg: pal.fg[fi], bg: pal.bg[bi], rgb: [b[0] + (f[0] - b[0]) * a, b[1] + (f[1] - b[1]) * a, b[2] + (f[2] - b[2]) * a] }));
+      }
+    });
+  }
+}
+function dist(r, g, b, c) {
+  if (pal.mono) { const d = Math.max(r, g, b) - Math.max(c[0], c[1], c[2]); return d * d * 9; }
+  const dr = r - c[0], dg = g - c[1], db = b - c[2];
+  return 2 * dr * dr + 4 * dg * dg + 3 * db * db;
+}
+function nearest(list, cache, r, g, b) {
+  const key = (Math.round(r * 31) << 10) | (Math.round(g * 31) << 5) | Math.round(b * 31);
+  let i = cache.get(key);
+  if (i === undefined) {
+    let be = Infinity; i = 0;
+    for (let k = 0; k < list.length; k++) { const e = dist(r, g, b, list[k].rgb || list[k]); if (e < be) { be = e; i = k; } }
+    cache.set(key, i);
+  }
+  return i;
+}
+// Keep the hue of a cell but lift its brightness, since glyph density already carries the darkness.
+function pickFg(r, g, b, level) {
+  if (pal.mono) return pal.fg[Math.min(pal.fg.length - 1, Math.floor(clamp(level) * pal.fg.length))];
+  let mx = Math.max(r, g, b);
+  if (mx < 1e-5) r = g = b = mx = 0.5;
+  const k = Math.min(1, 0.45 + mx * 0.8) / mx;
+  r *= k; g *= k; b *= k;
+  if (pal.truecolor) return rgbHex(Math.round(r * 5) / 5, Math.round(g * 5) / 5, Math.round(b * 5) / 5);
+  return pal.fg[nearest(pal.fgRgb, memo.fg, r, g, b)];
+}
+function quantTrue(r, g, b) { return rgbHex(Math.round(r * 5) / 5, Math.round(g * 5) / 5, Math.round(b * 5) / 5); }
+
+// ---------- grid state ----------
+// Exports keep the output canvas CPU-backed so toDataURL never reads back an unflushed GPU frame.
+const out = document.getElementById('out'), octx = out.getContext('2d', { willReadFrequently: EXPORT });
+const sc = document.createElement('canvas'), sctx = sc.getContext('2d', { willReadFrequently: true });
+const grid = document.createElement('canvas'), gctx = grid.getContext('2d');
+let cols, rows, cw, ch, GW, GH, SW, SH, ox, oy, total;
+let S, AR, AG, AB, E, keys, cache, gridImg, gridBuf;
+const s16 = new Float32Array(16);
+let OG, OF, OB; // per-cell result: glyph id, fg, bg
+
+function rebuild() {
+  const M = MODES[cfg.mode];
+  let aspect = M.aspect, defCols = M.cols;
+  if (cfg.mode === 'custom') {
+    // Size cells to the widest typed glyph: wide sets (CJK, emoji) get squarer cells and fewer columns.
+    const wr = Math.max(0.62, glyphWidth(splitChars(cfg.chars)));
+    aspect = clamp(1.1 / wr, 1, M.aspect);
+    defCols = Math.round((M.cols * 0.62) / wr);
+  }
+  // Cells are whole pixels and the grid always covers the frame; overflow of less than one
+  // cell is cropped evenly at the edges. Default column counts scale with output width.
+  cw = Math.max(2, Math.round(cfg.w / (cfg.cols || Math.round((defCols * cfg.w) / 1920))));
+  ch = Math.max(2, Math.round(cw * aspect));
+  cols = Math.ceil(cfg.w / cw); rows = Math.ceil(cfg.h / ch);
+  GW = cols * cw; GH = rows * ch;
+  ox = Math.floor((cfg.w - GW) / 2); oy = Math.floor((cfg.h - GH) / 2);
+  SW = cols * M.sx; SH = rows * M.sy;
+  sc.width = SW; sc.height = SH;
+  grid.width = GW; grid.height = GH;
+  gridImg = gctx.createImageData(GW, GH); gridBuf = new Uint32Array(gridImg.data.buffer);
+  out.width = cfg.w; out.height = cfg.h;
+  const n = SW * SH;
+  S = new Float32Array(n); AR = new Float32Array(n); AG = new Float32Array(n); AB = new Float32Array(n); E = new Float32Array(n);
+  keys = new Array(cols * rows).fill('');
+  cache = new Map();
+  total = Math.max(1, Math.round(cfg.loop * cfg.fps));
+  SCENES[cfg.scene].gen(cfg.seed, cfg.loop);
+  resolvePalette();
+  if (cfg.mode === 'ascii') ASCII = buildCharset([...ASCII_CHARS], ' .:;+*%#@');
+  if (cfg.mode === 'custom') CUSTOM = buildCharset(splitChars(cfg.chars));
+  fit();
+}
+
+function prep() {
+  const d = sctx.getImageData(0, 0, SW, SH).data, n = SW * SH;
+  const bl = cfg.black, gn = cfg.gain / (1 - bl);
+  // Hue rotation (about the grey axis) and saturation, applied to the scene before any mode
+  // or palette sees it.
+  const recolor = cfg.hue !== 0 || cfg.sat !== 1;
+  const ca = Math.cos((cfg.hue * Math.PI) / 180), sa = Math.sin((cfg.hue * Math.PI) / 180), t3 = (1 - ca) / 3, rs = Math.sqrt(1 / 3) * sa;
+  const m0 = ca + t3, m1 = t3 - rs, m2 = t3 + rs, sat = cfg.sat;
+  for (let p = 0, q = 0; p < n; p++, q += 4) {
+    let r = d[q] / 255, g = d[q + 1] / 255, b = d[q + 2] / 255;
+    if (recolor) {
+      const r1 = m0 * r + m1 * g + m2 * b, g1 = m2 * r + m0 * g + m1 * b, b1 = m1 * r + m2 * g + m0 * b;
+      const l = 0.2126 * r1 + 0.7152 * g1 + 0.0722 * b1;
+      r = clamp(l + (r1 - l) * sat); g = clamp(l + (g1 - l) * sat); b = clamp(l + (b1 - l) * sat);
+    }
+    const mx = r > g ? (r > b ? r : b) : g > b ? g : b;
+    const v = 0.5 * (0.2126 * r + 0.7152 * g + 0.0722 * b) + 0.5 * mx;
+    let s = (v - bl) * gn;
+    s = s < 0 ? 0 : s > 1 ? 1 : s;
+    const k = v > 1e-4 ? s / v : 0, kr = r * k, kg = g * k, kb = b * k;
+    S[p] = s; AR[p] = kr > 1 ? 1 : kr; AG[p] = kg > 1 ? 1 : kg; AB[p] = kb > 1 ? 1 : kb;
+  }
+  // Line art traces ridges (a sample brighter than its neighbourhood): thin strokes stay,
+  // flat fills vanish, and filled shapes keep only their inner outline.
+  if (cfg.mode === 'lines') {
+    for (let y = 0; y < SH; y++) for (let x = 0; x < SW; x++) {
+      let sum = 0;
+      for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) sum += S[clamp(y + j, 0, SH - 1) * SW + clamp(x + i, 0, SW - 1)];
+      E[y * SW + x] = clamp((S[y * SW + x] - sum / 9) * 3.5);
+    }
+  }
+}
+
+function empty() { OG = 'e'; OF = OB = pal.screen; }
+
+// Gathers a 4x4 block from a sample array; returns mean, leaves weighted colour in col[].
+const col = [0, 0, 0];
+function gather4(src, cx, cy) {
+  let sum = 0, mx = 0, wr = 0, wg = 0, wb = 0, ws = 0;
+  for (let j = 0; j < 4; j++) for (let i = 0; i < 4; i++) {
+    const p = (cy * 4 + j) * SW + cx * 4 + i, v = src[p], w = v * (S[p] + 0.05);
+    s16[j * 4 + i] = v; sum += v; if (v > mx) mx = v;
+    wr += AR[p] * w; wg += AG[p] * w; wb += AB[p] * w; ws += w;
+  }
+  ws = ws || 1; col[0] = wr / ws; col[1] = wg / ws; col[2] = wb / ws;
+  return [sum / 16, mx];
+}
+
+function textCell(cs, fam, cx, cy) {
+  const [mean, mx] = gather4(S, cx, cy);
+  if (mx < 0.06) return empty();
+  let v = 0;
+  for (let k = 0; k < 16; k++) v += (s16[k] - mean) ** 2;
+  const gi = v < 0.04 ? rampGlyph(cs, mean) : match(cs.set, s16, mean);
+  if (gi === 0) return empty();
+  OG = fam + gi; OF = pickFg(col[0], col[1], col[2], mean * 1.6); OB = pal.screen;
+}
+
+const CELL = {
+  ascii(cx, cy) { textCell(ASCII, 'a:', cx, cy); },
+  custom(cx, cy) { textCell(CUSTOM, 'c:', cx, cy); },
+  petscii(cx, cy) {
+    const [mean, mx] = gather4(S, cx, cy);
+    if (mx < 0.08) return empty();
+    const gi = match(PET_SET, s16, mean);
+    if (gi === 0) return empty();
+    OG = 'p:' + gi; OF = pickFg(col[0], col[1], col[2], mean * 1.6); OB = pal.screen;
+  },
+  lines(cx, cy) {
+    const [mean, mx] = gather4(E, cx, cy);
+    if (mx < 0.15) return empty();
+    const gi = match(LINE_SET, s16, mean);
+    if (gi === 0) return empty();
+    OG = 'l:' + gi; OF = pickFg(col[0], col[1], col[2], mx); OB = pal.screen;
+  },
+  teletext(cx, cy) { dots(cx, cy, 2, 3, 't:'); },
+  braille(cx, cy) { dots(cx, cy, 2, 4, 'r:'); },
+  blocks(cx, cy) {
+    let any = 0;
+    for (let j = 0, k = 0; j < 4; j++) {
+      const p0 = (cy * 4 + j) * SW + cx * 2;
+      for (let i = 0; i < 2; i++, k++) { const p = p0 + i; bR[k] = AR[p]; bG[k] = AG[p]; bB[k] = AB[p]; if (S[p] > any) any = S[p]; }
+    }
+    if (any < 0.03) return empty();
+    for (let h = 0; h < 4; h++) {
+      const ks = HALVES[h];
+      HAV[h * 3] = (bR[ks[0]] + bR[ks[1]] + bR[ks[2]] + bR[ks[3]]) / 4;
+      HAV[h * 3 + 1] = (bG[ks[0]] + bG[ks[1]] + bG[ks[2]] + bG[ks[3]]) / 4;
+      HAV[h * 3 + 2] = (bB[ks[0]] + bB[ks[1]] + bB[ks[2]] + bB[ks[3]]) / 4;
+    }
+    if (pal.truecolor) { OG = '▀'; OF = quantTrue(HAV[0], HAV[1], HAV[2]); OB = quantTrue(HAV[3], HAV[4], HAV[5]); return; }
+    const m = pal.mixes[nearest(pal.mixes, memo.mix, (HAV[0] + HAV[3]) / 2, (HAV[1] + HAV[4]) / 2, (HAV[2] + HAV[5]) / 2)];
+    let be = blockErr(ALL8, m.rgb) * 0.92;
+    OG = m.gid; OF = m.fg; OB = m.bg;
+    for (const [gid, A, Z] of HALF_GLYPHS) {
+      const f = nearest(pal.fgRgb, memo.fg, HAV[A * 3], HAV[A * 3 + 1], HAV[A * 3 + 2]);
+      const bk = nearest(pal.bgRgb, memo.bg, HAV[Z * 3], HAV[Z * 3 + 1], HAV[Z * 3 + 2]);
+      const e = blockErr(HALVES[A], pal.fgRgb[f]) + blockErr(HALVES[Z], pal.bgRgb[bk]);
+      if (e < be) { be = e; OG = gid; OF = pal.fg[f]; OB = pal.bg[bk]; }
+    }
+  },
+};
+
+// Scratch space for the blocks mode: the cell's 8 samples, and the average colour of its top,
+// bottom, left and right halves (sample indices are row * 2 + column).
+const bR = new Float32Array(8), bG = new Float32Array(8), bB = new Float32Array(8), HAV = new Float32Array(12);
+const HALVES = [[0, 1, 2, 3], [4, 5, 6, 7], [0, 2, 4, 6], [1, 3, 5, 7]], ALL8 = [0, 1, 2, 3, 4, 5, 6, 7];
+const HALF_GLYPHS = [['▀', 0, 1], ['▄', 1, 0], ['▌', 2, 3], ['▐', 3, 2]];
+function blockErr(ks, c) { let e = 0; for (let t = 0; t < ks.length; t++) { const k = ks[t]; e += dist(bR[k], bG[k], bB[k], c); } return e; }
+
+// Teletext sextants and braille: each sub-dot is on or off, with ordered dithering for gradients.
+function dots(cx, cy, w, h, fam) {
+  let bits = 0, wr = 0, wg = 0, wb = 0, lv = 0, cnt = 0;
+  const d = cfg.dither;
+  for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+    const gx = cx * w + i, gy = cy * h + j, p = gy * SW + gx, v = S[p];
+    const thr = 0.5 * (1 - d) + (d * (BAYER[(gy & 3) * 4 + (gx & 3)] + 0.5)) / 16;
+    if (v > thr) { bits |= 1 << (j * w + i); wr += AR[p]; wg += AG[p]; wb += AB[p]; lv += v; cnt++; }
+  }
+  if (!bits) return empty();
+  OG = fam + bits; OF = pickFg(wr / cnt, wg / cnt, wb / cnt, lv / cnt); OB = pal.screen;
+}
+
+function drawBits(g, rows, nb, w, h) {
+  const H = rows.length;
+  for (let y = 0; y < H; y++) for (let x = 0; x < nb; x++) if ((rows[y] >> (nb - 1 - x)) & 1) {
+    const x0 = Math.round((x * w) / nb), x1 = Math.round(((x + 1) * w) / nb), y0 = Math.round((y * h) / H), y1 = Math.round(((y + 1) * h) / H);
+    g.fillRect(x0, y0, x1 - x0, y1 - y0);
+  }
+}
+
+function makeGlyph(gid, fg, bg) {
+  const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = bg; g.fillRect(0, 0, cw, ch);
+  g.fillStyle = fg; g.strokeStyle = fg;
+  const fam = gid[0], id = gid.slice(2);
+  if (fam === 'a' || fam === 'c') {
+    const cs = fam === 'a' ? ASCII : CUSTOM, i = +id;
+    g.font = cs.fonts[i]; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(cs.chars[i], cw / 2, ch / 2 + cs.dys[i]);
+  } else if (fam === 'p') {
+    drawBits(g, PET[+id], 8, cw, ch);
+  } else if (BLK[gid]) {
+    drawBits(g, BLK[gid].rows, 8, cw, ch);
+  } else if (fam === 't') {
+    const bits = +id;
+    for (let k = 0; k < 6; k++) if (bits & (1 << k)) {
+      const i = k % 2, j = (k / 2) | 0;
+      const x0 = Math.round((i * cw) / 2), x1 = Math.round(((i + 1) * cw) / 2), y0 = Math.round((j * ch) / 3), y1 = Math.round(((j + 1) * ch) / 3);
+      g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    }
+  } else if (fam === 'r') {
+    const bits = +id, rad = Math.min(cw / 2, ch / 4) * 0.34;
+    for (let k = 0; k < 8; k++) if (bits & (1 << k)) {
+      g.beginPath(); g.arc(((k % 2) + 0.5) * (cw / 2), (((k / 2) | 0) + 0.5) * (ch / 4), rad, 0, TAU); g.fill();
+    }
+  } else if (fam === 'l') {
+    const b = +id, mx = cw / 2, my = ch / 2, lw = Math.max(1.5, Math.min(cw, ch) * 0.14);
+    g.lineWidth = lw;
+    const seg = (x0, y0, x1, y1) => { g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke(); };
+    if (b < 16) {
+      if (b & 1) seg(mx, my, mx, 0);
+      if (b & 2) seg(mx, my, cw, my);
+      if (b & 4) seg(mx, my, mx, ch);
+      if (b & 8) seg(mx, my, 0, my);
+      if (b) g.fillRect(mx - lw / 2, my - lw / 2, lw, lw);
+    } else if (b === 19) {
+      g.fillRect(mx - lw / 2, my - lw / 2, lw, lw);
+    } else if (b === 20) {
+      g.strokeRect(cw * 0.2, ch * 0.2, cw * 0.6, ch * 0.6);
+    } else {
+      if (b === 16 || b === 18) seg(0, ch, cw, 0);
+      if (b === 17 || b === 18) seg(0, 0, cw, ch);
+    }
+  }
+  return c;
+}
+
+// Glyphs are cached as raw pixels and copied straight into one buffer that is uploaded once
+// per frame; at high column counts that is far faster than a drawImage call per cell.
+function renderGrid() {
+  const fn = CELL[cfg.mode], buf = gridBuf;
+  let i = 0, dirty = false;
+  for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++, i++) {
+    fn(cx, cy);
+    const key = OG + '|' + OF + '|' + OB;
+    if (keys[i] === key) continue;
+    keys[i] = key;
+    let px = cache.get(key);
+    if (!px) { px = new Uint32Array(makeGlyph(OG, OF, OB).getContext('2d').getImageData(0, 0, cw, ch).data.buffer); cache.set(key, px); }
+    for (let y = 0, o = cy * ch * GW + cx * cw, s = 0; y < ch; y++, o += GW) for (let x = 0; x < cw; x++) buf[o + x] = px[s++];
+    dirty = true;
+  }
+  if (dirty) gctx.putImageData(gridImg, 0, 0);
+}
+
+let scan;
+function compose() {
+  octx.globalCompositeOperation = 'source-over'; octx.globalAlpha = 1; octx.filter = 'none';
+  octx.fillStyle = pal.border; octx.fillRect(0, 0, cfg.w, cfg.h);
+  if (pal.screen !== pal.border) { octx.fillStyle = pal.screen; octx.fillRect(ox, oy, GW, GH); }
+  octx.drawImage(grid, ox, oy);
+  if (!cfg.crt) return;
+  octx.globalCompositeOperation = 'lighter'; octx.globalAlpha = 0.45; octx.filter = `blur(${Math.round(cfg.h / 140)}px)`;
+  octx.drawImage(grid, ox, oy);
+  octx.filter = 'none'; octx.globalAlpha = 1; octx.globalCompositeOperation = 'source-over';
+  if (!scan) {
+    const p = document.createElement('canvas'); p.width = 1; p.height = 4;
+    const pg = p.getContext('2d'); pg.fillStyle = 'rgba(0,0,0,.38)'; pg.fillRect(0, 3, 1, 1);
+    scan = octx.createPattern(p, 'repeat');
+  }
+  octx.fillStyle = scan; octx.fillRect(0, 0, cfg.w, cfg.h);
+  const v = octx.createRadialGradient(cfg.w / 2, cfg.h / 2, cfg.h * 0.45, cfg.w / 2, cfg.h / 2, cfg.h * 1.05);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(0,0,0,.55)');
+  octx.fillStyle = v; octx.fillRect(0, 0, cfg.w, cfg.h);
+}
+
+function render(frame) {
+  const f = ((frame % total) + total) % total;
+  // Start every frame from black so nothing a scene leaves uncovered carries over.
+  sctx.setTransform(1, 0, 0, 1, 0, 0); sctx.fillStyle = '#000'; sctx.fillRect(0, 0, SW, SH);
+  SCENES[cfg.scene].draw(f / total);
+  prep();
+  renderGrid();
+  compose();
+  return f;
+}
+
+function fit() {
+  const s = Math.min(innerWidth / cfg.w, innerHeight / cfg.h);
+  out.style.width = cfg.w * s + 'px'; out.style.height = cfg.h * s + 'px';
+}
+addEventListener('resize', fit);
+
+// ---------- playback + UI ----------
+let frame = 0, playing = true, last = 0, acc = 0;
+const $ = id => document.getElementById(id);
+const ui = $('ui');
+
+function exportQuery() {
+  const q = new URLSearchParams({ scene: cfg.scene, mode: cfg.mode, palette: cfg.palette, cols: cols, black: cfg.black, gain: cfg.gain, dither: cfg.dither, seed: cfg.seed, loop: cfg.loop, fps: cfg.fps });
+  if (cfg.crt) q.set('crt', '1');
+  if (cfg.hue) q.set('hue', cfg.hue);
+  if (cfg.density !== 1) q.set('density', cfg.density);
+  if (cfg.sat !== 1) q.set('sat', cfg.sat);
+  if (cfg.pan) q.set('pan', '1');
+  if (cfg.mode === 'custom') q.set('chars', cfg.chars);
+  if (cfg.w !== 1920 || cfg.h !== 1080) { q.set('w', cfg.w); q.set('h', cfg.h); }
+  return q.toString();
+}
+
+function syncUI() {
+  // Cells are whole pixels, so nearby column counts can land on the same cell size; the
+  // readout shows the real count and the slider is left alone while it is being dragged.
+  $('cols').max = Math.floor(cfg.w / 3);
+  if (document.activeElement !== $('cols')) $('cols').value = cols;
+  $('colsV').value = cols;
+  $('res').value = cfg.w + 'x' + cfg.h;
+  for (const k of ['black', 'gain', 'dither', 'sat']) { $(k).value = cfg[k]; $(k + 'V').value = (+cfg[k]).toFixed(2); }
+  $('hue').value = cfg.hue; $('hueV').value = cfg.hue + '°';
+  $('density').value = cfg.density; $('densityV').value = (+cfg.density).toFixed(2) + '×';
+  $('scene').value = cfg.scene; $('mode').value = cfg.mode; $('palette').value = cfg.palette; $('seed').value = cfg.seed;
+  if (document.activeElement !== $('chars')) $('chars').value = cfg.chars;
+  $('loop').value = cfg.loop; $('fps').value = cfg.fps; $('crt').checked = cfg.crt; $('pan').checked = cfg.pan;
+  $('play').textContent = playing ? 'Pause' : 'Play';
+}
+function status() { $('stat').textContent = `${cols}×${rows} · ${frame + 1}/${total}`; }
+function change(fn, full = true) { fn(); if (full) rebuild(); else { keys.fill(''); } syncUI(); render(frame); status(); }
+
+for (const [k, s] of Object.entries(SCENES)) {
+  const label = s.group || 'Side view';
+  let grp = [...$('scene').children].find(c => c.label === label);
+  if (!grp) { grp = document.createElement('optgroup'); grp.label = label; $('scene').append(grp); }
+  grp.append(new Option(s.label, k));
+}
+for (const [k, m] of Object.entries(MODES)) $('mode').add(new Option(m.label, k));
+$('palette').add(new Option('Mode default', 'native'));
+for (const [k, p] of Object.entries(PALETTES)) {
+  let grp = [...$('palette').children].find(c => c.label === p.group);
+  if (!grp) { grp = document.createElement('optgroup'); grp.label = p.group; $('palette').append(grp); }
+  grp.append(new Option(p.label, k));
+}
+
+$('scene').onchange = e => change(() => { cfg.scene = e.target.value; });
+$('mode').onchange = e => change(() => { cfg.mode = e.target.value; cfg.cols = 0; });
+$('palette').onchange = e => change(() => { cfg.palette = e.target.value; });
+// Typing characters jumps straight into custom mode so the result is visible immediately.
+$('chars').oninput = e => change(() => {
+  cfg.chars = e.target.value;
+  if (cfg.mode !== 'custom') { cfg.mode = 'custom'; cfg.cols = 0; }
+});
+$('cols').oninput = e => change(() => { cfg.cols = +e.target.value; });
+for (const k of ['black', 'gain', 'dither', 'hue', 'sat']) $(k).oninput = e => change(() => { cfg[k] = +e.target.value; }, false);
+$('density').oninput = e => change(() => { cfg.density = +e.target.value; });
+$('seed').onchange = e => change(() => { cfg.seed = Math.max(1, +e.target.value | 0); });
+$('res').onchange = e => change(() => { [cfg.w, cfg.h] = e.target.value.split('x').map(Number); });
+$('loop').onchange = e => change(() => { cfg.loop = +e.target.value; frame = 0; });
+$('fps').onchange = e => change(() => { cfg.fps = +e.target.value; frame = 0; });
+$('crt').onchange = e => change(() => { cfg.crt = e.target.checked; }, false);
+$('pan').onchange = e => change(() => { cfg.pan = e.target.checked; }, false);
+$('play').onclick = () => { playing = !playing; syncUI(); };
+$('copy').onclick = async () => {
+  const cmd = `npm run export -- "${exportQuery()}"`;
+  try { await navigator.clipboard.writeText(cmd); $('copy').textContent = 'Copied!'; }
+  catch { prompt('Export command:', cmd); }
+  setTimeout(() => ($('copy').textContent = 'Copy export cmd'), 1200);
+};
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  const modes = Object.keys(MODES);
+  if (e.key === 'h' || e.key === 'H') ui.classList.toggle('hidden');
+  else if (e.key === ' ') { playing = !playing; syncUI(); e.preventDefault(); }
+  else if (e.key >= '1' && e.key <= String(modes.length)) change(() => { cfg.mode = modes[+e.key - 1]; cfg.cols = 0; });
+  else if (e.key === ',' || e.key === '.') { playing = false; frame = render(frame + (e.key === '.' ? 1 : -1)); syncUI(); status(); }
+});
+
+function tick(now) {
+  if (playing) {
+    acc += last ? Math.min(now - last, 100) : 0;
+    const step = 1000 / cfg.fps;
+    if (acc >= step) { const n = Math.floor(acc / step); acc -= n * step; frame = render(frame + n); status(); }
+  }
+  last = now;
+  requestAnimationFrame(tick);
+}
+
+rebuild();
+render(0);
+if (EXPORT) {
+  ui.classList.add('hidden');
+  document.fonts.ready.then(() => {
+    rebuild();
+    window.textmode = {
+      ready: true,
+      total: () => total,
+      renderFrame: i => { render(i); return out.toDataURL('image/png'); },
+    };
+  });
+} else {
+  syncUI(); status();
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>

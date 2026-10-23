@@ -1,0 +1,17 @@
+# Dependencies and exported clips (renders can run to hundreds of MB)
+node_modules/
+renders/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*

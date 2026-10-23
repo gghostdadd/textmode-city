@@ -1,0 +1,14 @@
+{
+  "name": "textmode-city",
+  "version": "1.0.0",
+  "description": "Seamlessly looping procedural scenes rendered through classic text-art character sets (ASCII, ANSI, PETSCII, teletext, braille), exported as HAP clips for VJ use in Resolume.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "export": "node export.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}
