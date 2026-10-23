@@ -6,6 +6,8 @@ type), built for exporting VJ clips to Resolume. Plain HTML and JavaScript, no i
 assets: every scene is drawn by code, and every motion repeats a whole number of times per
 loop, so the last frame flows straight back into the first.
 
+**[Try it live →](https://gghostdadd.github.io/textmode-city/)**
+
 ![Coast Highway, ASCII in truecolor](docs/coast-highway.gif)
 
 | | | |
