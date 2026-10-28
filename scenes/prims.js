@@ -36,6 +36,22 @@ const PRIMS = {
     return { v, f };
   })(),
 };
+// A lumpy asteroid: a coarse sphere with each vertex pushed in or out by a fixed amount (kept
+// nearly convex, which the face culling below relies on). Not in PRIM_TYPES.
+PRIMS.rock = (() => {
+  const lat = 5, lon = 8, jit = i => 0.8 + 0.35 * ((Math.sin(i * 12.9898 + 4.1) * 43758.5453) % 1 + 1) % 1;
+  const v = [[0, 0, 0]];
+  for (let a = 1; a < lat; a++) for (let b = 0; b < lon; b++) {
+    const th = (Math.PI * a) / lat, ph = ((2 * Math.PI) * (b + a * 0.5)) / lon, j = jit(a * lon + b);
+    v.push([0.5 * j * Math.sin(th) * Math.cos(ph), 0.5 - 0.5 * j * Math.cos(th), 0.5 * j * Math.sin(th) * Math.sin(ph)]);
+  }
+  v.push([0, 1, 0]);
+  const top = v.length - 1, at = (a, b) => 1 + (a - 1) * lon + (b % lon), f = [];
+  for (let b = 0; b < lon; b++) f.push([0, at(1, b), at(1, b + 1)]);
+  for (let a = 1; a < lat - 1; a++) for (let b = 0; b < lon; b++) { f.push([at(a, b), at(a + 1, b), at(a + 1, b + 1)]); f.push([at(a, b), at(a + 1, b + 1), at(a, b + 1)]); }
+  for (let b = 0; b < lon; b++) f.push([at(lat - 1, b), top, at(lat - 1, b + 1)]);
+  return { v, f };
+})();
 const PRIM_TYPES = ['cube', 'pyramid', 'cone', 'sphere'];
 const PRIM_COLORS = ['#ff3a3a', '#ffd23a', '#3ad85a', '#ff4fd8', '#3ae0ff', '#f4f4f4', '#ff8a2a', '#8a5aff'];
 
