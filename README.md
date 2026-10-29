@@ -20,8 +20,8 @@ loop, so the last frame flows straight back into the first.
 | Jungle Trail · ASCII truecolor | Dune Sea · Synthwave gradient | Neon City · custom `01` |
 | ![School Dance](docs/school-dance.png) | ![Coral Reef](docs/coral-reef.png) | ![Space Flight](docs/space-flight.png) |
 | School Dance · ANSI blocks | Coral Reef · ANSI blocks truecolor | Space Flight · ANSI blocks truecolor |
-| ![Neon Tunnel](docs/neon-tunnel.png) | | |
-| Neon Tunnel · braille | | |
+| ![Neon Tunnel](docs/neon-tunnel.png) | ![Fireworks](docs/fireworks.png) | |
+| Neon Tunnel · braille | Fireworks · ASCII | |
 
 ## Quick start
 
@@ -57,6 +57,7 @@ frame. The seed sets each scene's layout; the same settings always give the same
 | Primitives | [scenes/primitives.js](scenes/primitives.js) | Old-school 3D: a blue plane with grid lines under a gradient sky, rows of flat-shaded cubes, pyramids, cones and faceted spheres (some spinning) with drop shadows; parallax slides the rows 1 to 4 widths per loop |
 | School Dance | [scenes/prom.js](scenes/prom.js) | Vintage prom in the school gym: a big mirror ball top middle throwing light spots that sweep over the walls, floor and dancers as it turns, haze beams, couples in three rows turning in 3D about each other (50s/60s silhouettes in real proportions: gowns and tea-length dresses, tuxes, bouffants, pompadours; arms are limbs with hands that rest on a partner's back, shoulders or waist; some slow-dance and sway, others spin two or three times per loop in an open hold with skirts flaring), crepe-paper streamers, balloon clusters, a curtained stage with a starry backdrop and paper moon, two pin spots circling the varnished floor, confetti |
 | Coral Reef | [scenes/reef.js](scenes/reef.js) | A crowded reef in deep blue water: red, pink, orange and purple soft-coral trees, boulder, cauliflower and brain corals, white bushy corals, sea fans, tube sponges and plate corals covering the reef face, all outlined so they stand apart, a pulsing bubble-tip anemone with a clownfish pair, a swarm of hovering anthias, chromis schools, a swaying sea whip, far-off fish, light shafts, bubbles, marine snow |
+| Fireworks | [scenes/fireworks.js](scenes/fireworks.js) | Just fireworks on a night sky, every spark one character: rockets climb as a single glyph with a sparkling trail, then burst (peony, trailing chrysanthemum, gold willow, ring, palm, crackling glitter, two-colour breaks) into sparks drawn on the character grid and shaped by brightness, so they read as `@ # + * : .` as they cool and fade; flashes and drifting smoke. Density scales the shell count by its square, up to nine times as many at 3× for a dense finale. Bursts still burning at the end of the loop carry on into the start |
 
 ### 3D drive scenes
 
